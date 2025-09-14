@@ -1,0 +1,47 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Next.js build outputs
+.next/
+out/
+.vercel/
+.turbo/
+
+# Build artifacts
+dist/
+build/
+
+# Env files
+.env
+.env*.local
+
+# Logs
+*.log
+logs
+*.pid
+*.seed
+*.pid.lock
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+coverage/
+
