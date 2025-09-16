@@ -1,12 +1,9 @@
 // app/play/page.tsx
 import { Suspense } from "react";
-import dynamic from "next/dynamic";
+import PlayClient from "./PlayClient";
 
-// Prevent static prerendering / CSR bailout issues on Vercel
+// Prevent static prerendering / CSR bailout on Vercel
 export const dynamic = "force-dynamic"; // or: export const revalidate = 0;
-
-// Option A: render client-only (no SSR of the game)
-const PlayClient = dynamic(() => import("./PlayClient"), { ssr: false });
 
 export default function Page() {
   return (
