@@ -1,15 +1,3 @@
-// app/play/PlayClient.tsx
-"use client";
-
-import Image from "next/image";
-import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
-
-// ... keep ALL your existing code here, unchanged except the function name ...
-
-export default function PlayClient() {
-// app/play/page.tsx
 "use client";
 
 import Image from "next/image";
@@ -63,7 +51,7 @@ function seqEqual(a: string[], b: string[]) {
   return true;
 }
 
-export default function Play() {
+export default function PlayClient() {
   const searchParams = useSearchParams();
   const modeParam = (searchParams.get("mode") || "normal").toLowerCase();
   const perQuestion = MODE_LIMITS[modeParam] ?? MODE_LIMITS.normal;
@@ -128,7 +116,6 @@ export default function Play() {
       setPostLeft(prev => {
         const next = prev > 0 ? prev - 1 : 0;
         if (next === 0) {
-          // clear interval first, then call the latest next function
           clearPostTimer();
           goNextRef.current();
         }
@@ -225,9 +212,7 @@ export default function Play() {
   };
 
   const handleNext = useCallback(() => {
-    // guard against unintended calls
     if (!revealedRef.current || finalShownRef.current) return;
-
     clearPostTimer();
 
     if (qIndexRef.current + 1 >= ROUND_SIZE) {
@@ -237,7 +222,6 @@ export default function Play() {
     setQIndex(i => i + 1);
     fetchCardUnique();
   }, []);
-  // expose latest handleNext to the interval via ref
   useEffect(() => { goNextRef.current = handleNext; }, [handleNext]);
 
   const difficultyBadge = useMemo(() => (hard ? "Hard (silhouette)" : "Normal"), [hard]);
@@ -250,7 +234,6 @@ export default function Play() {
     startQuestionTimer();
   }
   function handleImageError() {
-    // try a different card if this one fails to load
     fetchCardUnique();
   }
 
@@ -374,6 +357,5 @@ export default function Play() {
       </div>
     </main>
   );
-}
 }
 
