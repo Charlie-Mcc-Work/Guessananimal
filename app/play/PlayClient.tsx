@@ -35,8 +35,8 @@ const STOPWORDS = new Set([
   'common', 'eastern', 'western', 'northern', 'southern',
 ]);
 
-const QUEUE_MIN = 5;     // keep at least this many prefetched
-const QUEUE_FETCH = 16;  // fetch this many when refilling
+const QUEUE_MIN = 5;
+const QUEUE_FETCH = 16;
 
 function tokenizeMeaningful(s: string): string[] {
   return s
@@ -159,12 +159,11 @@ export default function PlayClient() {
     });
   }
 
-  async function refillQueue(minNeeded: number) {
+  async function refillQueue() {
     try {
       const res = await fetch('/api/cards?ts=' + Date.now(), { cache: 'no-store' });
       const data = await res.json().catch(() => null) as any;
       const items = Array.isArray(data?.items) ? data.items : [];
-      // Preload first few to make the next transitions instant
       const toPreload = items.slice(0, 6);
       await Promise.allSettled(toPreload.map((c: Card) => preloadImage(c.imageUrl)));
       setQueue((old) => old.concat(items));
@@ -175,7 +174,23 @@ export default function PlayClient() {
 
   async function ensureQueue() {
     if (queue.length >= QUEUE_MIN) return;
-    await refillQueue(QUEUE_FETCH);
+    await refillQueue();
+  }
+
+  async function fetchFirstCard() {
+    try {
+      const res = await fetch('/api/card?ts=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const c = await res.json() as Card;
+      if (c && c.imageUrl) {
+        setCard(c);
+        setTimeout(() => inputRef.current?.focus(), 50);
+        setImageReady(false);
+        armImageTimeout(10000);
+      }
+    } catch (e) {
+      // ignore, queue fallback will handle
+    }
   }
 
   async function initRound() {
@@ -186,28 +201,20 @@ export default function PlayClient() {
     clearQuestionTimer();
     clearPostTimer();
 
-    // prime the queue if empty
-    if (queue.length < 1) {
-      await ensureQueue();
-    }
-    // if still empty, try again once
-    if (queue.length < 1) {
-      await ensureQueue();
+    // Kick off both in parallel: fast single and queue refill
+    await Promise.allSettled([fetchFirstCard(), ensureQueue()]);
+
+    // If single failed and queue has items, use queue head
+    if (!card && queue.length > 0) {
+      const next = queue[0];
+      setCard(next);
+      setQueue((old) => old.slice(1));
+      setTimeout(() => inputRef.current?.focus(), 50);
+      setImageReady(false);
+      armImageTimeout(10000);
     }
 
-    const next = queue.length > 0 ? queue[0] : null;
-    if (!next) { setLoading(false); return; }
-
-    setCard(next);
-    setQueue((old) => old.slice(1));
-    setTimeout(() => inputRef.current?.focus(), 50);
     setLoading(false);
-
-    setImageReady(false);
-    armImageTimeout(10000);
-
-    // keep queue topped up
-    ensureQueue();
   }
 
   async function advanceCard() {
@@ -219,10 +226,17 @@ export default function PlayClient() {
     clearPostTimer();
     clearImageTimeout();
 
-    // take next from queue
     if (queue.length < 1) {
-      await ensureQueue();
+      // Refill in background (do not block UI forever)
+      ensureQueue();
+      // As an immediate fallback, try a fast single
+      await fetchFirstCard();
+      if (card) {
+        setLoading(false);
+        return;
+      }
     }
+
     const next = queue.length > 0 ? queue[0] : null;
     if (next) {
       setCard(next);
@@ -235,7 +249,6 @@ export default function PlayClient() {
       return;
     }
 
-    // still nothing (rare)
     setLoading(false);
   }
 
@@ -321,7 +334,7 @@ export default function PlayClient() {
       <div className='card'>
         <div className='header'>
           <h1 className='h1'>Guess the Animal</h1>
-          <div className='row'>
+        <div className='row'>
             <span className='badge'>Q: {progress}</span>
             <span className='badge'>Mode: {modeLabel}</span>
             {!revealed ? (

@@ -1,4 +1,4 @@
-// app/api/card/route.ts
+// app/api/cards/route.ts
 import { NextResponse } from 'next/server';
 
 export const runtime = 'edge';
@@ -67,9 +67,18 @@ function toCard(obs: any): Card | null {
   };
 }
 
-async function fetchSingle(): Promise<Card | null> {
+function shuffle<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  }
+  return arr;
+}
+
+async function fetchBatchINat(count: number): Promise<Card[]> {
+  const perPage = Math.min(Math.max(count * 3, 30), 100);
   const params = new URLSearchParams();
-  params.set('per_page', '1');
+  params.set('per_page', String(perPage));
   params.append('has[]', 'photos');
   params.set('quality_grade', 'research');
   params.set('photo_license', 'cc0,cc-by,cc-by-sa,cc-by-nc');
@@ -81,34 +90,47 @@ async function fetchSingle(): Promise<Card | null> {
   const url = 'https://api.inaturalist.org/v1/observations?' + params.toString();
 
   const res = await fetch(url, { cache: 'no-store', headers: { 'Accept': 'application/json' } });
-  if (!res.ok) return null;
+  if (!res.ok) return [];
 
   const json = await res.json().catch(() => null) as any;
   const results = Array.isArray(json?.results) ? json.results : [];
-  if (results.length === 0) return null;
+  const cards = results.map(toCard).filter(Boolean) as Card[];
 
-  return toCard(results[0]);
+  const seen = new Set<string>();
+  const dedup: Card[] = [];
+  for (const c of cards) {
+    if (!seen.has(c.imageUrl)) {
+      seen.add(c.imageUrl);
+      dedup.push(c);
+    }
+  }
+  shuffle(dedup);
+  return dedup.slice(0, count);
 }
 
 export async function GET() {
-  for (let i = 0; i < 3; i++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const card = await fetchSingle();
-      if (card) {
-        return NextResponse.json(card, {
-          headers: {
-            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-            'CDN-Cache-Control': 'no-store',
-            'Vercel-CDN-Cache-Control': 'no-store',
-          },
-        });
+      const items = await fetchBatchINat(24);
+      if (items.length > 0) {
+        return NextResponse.json(
+          { items },
+          {
+            headers: {
+              'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+              'CDN-Cache-Control': 'no-store',
+              'Vercel-CDN-Cache-Control': 'no-store',
+            },
+          }
+        );
       }
     } catch {
       // retry
     }
   }
+
   return NextResponse.json(
-    { error: 'Upstream unavailable. Try again.' },
+    { items: [] },
     { status: 502, headers: { 'Cache-Control': 'no-store' } }
   );
 }
