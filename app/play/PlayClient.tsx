@@ -131,7 +131,7 @@ export default function PlayClient() {
     let tries = 0;
     while (tries++ < maxTries) {
       try {
-        // IMPORTANT: no silhouette param; add ts to bust caches
+        // IMPORTANT: no silhouette param; add ts to bust CDN cache
         const res = await fetch('/api/card?ts=${Date.now()}', { cache: "no-store" });
         const data: Card = await res.json();
         if (data?.imageUrl && !seenInRound.has(data.imageUrl)) {
@@ -139,7 +139,7 @@ export default function PlayClient() {
           setSeenInRound(prev => new Set(prev).add(data.imageUrl));
           setTimeout(() => inputRef.current?.focus(), 50);
           setLoading(false);
-          // wait for image load to start timer
+          // wait for image to load to start timer
           return;
         }
       } catch (e) {
@@ -266,6 +266,7 @@ export default function PlayClient() {
                 return (
                   <div key={idx} className={`summaryCard ${status}`}>
                     <div className="thumb">
+                      {/* Thumbs stay optimized */}
                       <Image
                         src={h.imageUrl}
                         alt={h.commonName}
@@ -303,6 +304,8 @@ export default function PlayClient() {
                   alt={card.commonName || "Unknown animal"}
                   fill
                   priority
+                  unoptimized
+                  sizes="(max-width: 900px) 100vw, 900px"
                   onLoadingComplete={handleImageLoaded}
                   onError={handleImageError}
                   style={{ objectFit: "cover" }}
