@@ -85,6 +85,10 @@ export default function PlayClient() {
   const questionTimerRef = useRef<number | null>(null);
   const postTimerRef = useRef<number | null>(null);
 
+  // image load timeout + advancing guard
+  const imageTimeoutRef = useRef<number | null>(null);
+  const advancingRef = useRef(false);
+
   // stable refs for timers
   const revealedRef = useRef(revealed);
   const finalShownRef = useRef(finalShown);
@@ -131,6 +135,29 @@ export default function PlayClient() {
     }, 1000);
   }
 
+  function clearImageTimeout() {
+    if (imageTimeoutRef.current !== null) {
+      window.clearTimeout(imageTimeoutRef.current);
+      imageTimeoutRef.current = null;
+    }
+  }
+  function armImageTimeout(ms: number) {
+    clearImageTimeout();
+    imageTimeoutRef.current = window.setTimeout(() => {
+      if (!imageReady && !advancingRef.current) {
+        if (card && card.imageUrl) {
+          setSeenInRound((prev) => {
+            const n = new Set(prev);
+            n.add(card.imageUrl);
+            return n;
+          });
+        }
+        advancingRef.current = true;
+        advanceCard().finally(() => { advancingRef.current = false; });
+      }
+    }, ms);
+  }
+
   // Preload an image URL into cache
   function preloadImage(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -170,10 +197,15 @@ export default function PlayClient() {
     const current = await fetchOneUnique(seen);
     if (!current) { setLoading(false); return; }
     setCard(current);
+    console.log('Card current:', current);
     seen.add(current.imageUrl);
     setSeenInRound(seen);
     setTimeout(() => inputRef.current?.focus(), 50);
     setLoading(false);
+
+    // arm timeout for this image
+    setImageReady(false);
+    armImageTimeout(10000); // 10s
 
     // prefetch next
     const pre = await fetchOneUnique(seen);
@@ -192,15 +224,20 @@ export default function PlayClient() {
     setGuess('');
     clearQuestionTimer();
     clearPostTimer();
+    clearImageTimeout();
 
     const seen = new Set(seenInRound);
 
     if (nextCard && !seen.has(nextCard.imageUrl)) {
       setCard(nextCard);
+      console.log('Card next (prefetched):', nextCard);
       seen.add(nextCard.imageUrl);
       setSeenInRound(seen);
       setTimeout(() => inputRef.current?.focus(), 50);
       setLoading(false);
+
+      setImageReady(false);
+      armImageTimeout(10000);
 
       const pre = await fetchOneUnique(seen);
       if (pre) {
@@ -216,9 +253,12 @@ export default function PlayClient() {
     if (fresh) {
       try { await preloadImage(fresh.imageUrl); } catch {}
       setCard(fresh);
+      console.log('Card next (fresh):', fresh);
       seen.add(fresh.imageUrl);
       setSeenInRound(seen);
       setTimeout(() => inputRef.current?.focus(), 50);
+      setImageReady(false);
+      armImageTimeout(10000);
     }
     setLoading(false);
 
@@ -237,7 +277,7 @@ export default function PlayClient() {
   }, [perQuestion]);
 
   useEffect(() => {
-    return () => { clearQuestionTimer(); clearPostTimer(); };
+    return () => { clearQuestionTimer(); clearPostTimer(); clearImageTimeout(); };
   }, []);
 
   // auto-submit when pre-reveal timer hits 0
@@ -377,10 +417,24 @@ export default function PlayClient() {
                 <img
                   src={card.imageUrl}
                   alt={card.commonName || 'Unknown animal'}
-                  onLoad={() => setImageReady(true)}
-                  onError={() => advanceCard()}
+                  onLoad={() => { clearImageTimeout(); setImageReady(true); startQuestionTimer(); }}
+                  onError={() => {
+                    clearImageTimeout();
+                    if (card && card.imageUrl) {
+                      setSeenInRound((prev) => {
+                        const n = new Set(prev);
+                        n.add(card.imageUrl);
+                        return n;
+                      });
+                    }
+                    if (!advancingRef.current) {
+                      advancingRef.current = true;
+                      advanceCard().finally(() => { advancingRef.current = false; });
+                    }
+                  }}
                   decoding='async'
                   loading='eager'
+                  referrerPolicy='no-referrer'
                   style={{
                     position: 'absolute',
                     inset: 0,
