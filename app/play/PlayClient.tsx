@@ -169,7 +169,7 @@ export default function PlayClient() {
     });
   }
 
-  async function fetchOneUnique(already: Set<string>, maxTries = 6): Promise<Card | null> {
+  async function fetchOneUnique(already: Set<string>, maxTries = 10): Promise<Card | null> {
     let tries = 0;
     while (tries++ < maxTries) {
       try {
