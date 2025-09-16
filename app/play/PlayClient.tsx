@@ -6,9 +6,9 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
 type Card = {
-  imageUrl: string;          // image URL
-  commonName: string;        // English name
-  scientificName: string;    // Latin name
+  imageUrl: string;
+  commonName: string;
+  scientificName: string;
   license: string;
   source: string;
   attributions: string[];
@@ -57,6 +57,7 @@ export default function PlayClient() {
   const modeLabel = modeParam === "fast" ? "Fast (10s)" : modeParam === "slow" ? "Slow (30s)" : "Normal (20s)";
 
   const [card, setCard] = useState<Card | null>(null);
+  const [nextCard, setNextCard] = useState<Card | null>(null);       // prefetch buffer
   const [loading, setLoading] = useState(false);
   const [imageReady, setImageReady] = useState(false);
   const [guess, setGuess] = useState("");
@@ -74,7 +75,7 @@ export default function PlayClient() {
   const questionTimerRef = useRef<number | null>(null);
   const postTimerRef = useRef<number | null>(null);
 
-  // refs to avoid stale closures
+  // stable refs for timers
   const revealedRef = useRef(revealed);
   const finalShownRef = useRef(finalShown);
   const qIndexRef = useRef(qIndex);
@@ -120,7 +121,37 @@ export default function PlayClient() {
     }, 1000);
   }
 
-  async function fetchCardUnique(maxTries = 6) {
+  /** Preload an image URL into the browser cache */
+  function preloadImage(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve();
+      img.onerror = () => reject();
+      img.src = url;
+    });
+  }
+
+  async function fetchOneUnique(already: Set<string>, maxTries = 6): Promise<Card | null> {
+    let tries = 0;
+    while (tries++ < maxTries) {
+      try {
+        const res = await fetch(`/api/card?ts=${Date.now()}', { cache: "no-store" });
+        const data: Card = await res.json();
+        if (data?.imageUrl && !already.has(data.imageUrl)) {
+          return data;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return null;
+  }
+
+  // Fetch current card (cold start) and prefetch the next one in parallel
+  async function initRound() {
     setLoading(true);
     setRevealed(false);
     setImageReady(false);
@@ -128,29 +159,81 @@ export default function PlayClient() {
     clearQuestionTimer();
     clearPostTimer();
 
-    let tries = 0;
-    while (tries++ < maxTries) {
-      try {
-        // IMPORTANT: no silhouette param; add ts to bust CDN cache
-        const res = await fetch('/api/card?ts=${Date.now()}', { cache: "no-store" });
-        const data: Card = await res.json();
-        if (data?.imageUrl && !seenInRound.has(data.imageUrl)) {
-          setCard(data);
-          setSeenInRound(prev => new Set(prev).add(data.imageUrl));
-          setTimeout(() => inputRef.current?.focus(), 50);
-          setLoading(false);
-          // wait for image to load to start timer
-          return;
-        }
-      } catch (e) {
-        console.error(e);
+    const seen = new Set(seenInRound);
+    const current = await fetchOneUnique(seen);
+    if (!current) {
+      setLoading(false);
+      return;
+    }
+    setCard(current);
+    seen.add(current.imageUrl);
+    setSeenInRound(seen);
+    setTimeout(() => inputRef.current?.focus(), 50);
+    setLoading(false);
+
+    // kick off prefetch for the next card (best-effort)
+    const pre = await fetchOneUnique(seen);
+    if (pre) {
+      try { await preloadImage(pre.imageUrl); } catch {}
+      setNextCard(pre);
+    } else {
+      setNextCard(null);
+    }
+  }
+
+  // Get a new card after Next is clicked or auto-advance
+  async function advanceCard() {
+    setLoading(true);
+    setRevealed(false);
+    setImageReady(false);
+    setGuess("");
+    clearQuestionTimer();
+    clearPostTimer();
+
+    const seen = new Set(seenInRound);
+
+    // If we have a prefetched card, use it instantly
+    if (nextCard && !seen.has(nextCard.imageUrl)) {
+      setCard(nextCard);
+      seen.add(nextCard.imageUrl);
+      setSeenInRound(seen);
+      setTimeout(() => inputRef.current?.focus(), 50);
+      setLoading(false);
+
+      // Preload the following card in background
+      const pre = await fetchOneUnique(seen);
+      if (pre) {
+        try { await preloadImage(pre.imageUrl); } catch {}
+        setNextCard(pre);
+      } else {
+        setNextCard(null);
       }
+      return;
+    }
+
+    // Fallback: fetch a fresh one now
+    const fresh = await fetchOneUnique(seen);
+    if (fresh) {
+      try { await preloadImage(fresh.imageUrl); } catch {}
+      setCard(fresh);
+      seen.add(fresh.imageUrl);
+      setSeenInRound(seen);
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
     setLoading(false);
+
+    // And try to stage the next one
+    const pre = await fetchOneUnique(seen);
+    if (pre) {
+      try { await preloadImage(pre.imageUrl); } catch {}
+      setNextCard(pre);
+    } else {
+      setNextCard(null);
+    }
   }
 
   useEffect(() => {
-    fetchCardUnique();
+    initRound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perQuestion]);
 
@@ -217,21 +300,13 @@ export default function PlayClient() {
       return;
     }
     setQIndex(i => i + 1);
-    fetchCardUnique();
+    advanceCard();
   }, []);
   useEffect(() => { goNextRef.current = handleNext; }, [handleNext]);
 
   const progress = `${qIndex + 1} / ${ROUND_SIZE}`;
   const questionUrgent = imageReady && !revealed && timeLeft <= 3;
   const postUrgent = revealed && !finalShown && postLeft <= 5;
-
-  function handleImageLoaded() {
-    setImageReady(true);
-    startQuestionTimer();
-  }
-  function handleImageError() {
-    fetchCardUnique();
-  }
 
   return (
     <main className="container">
@@ -266,7 +341,7 @@ export default function PlayClient() {
                 return (
                   <div key={idx} className={`summaryCard ${status}`}>
                     <div className="thumb">
-                      {/* Thumbs stay optimized */}
+                      {/* thumbnails keep Next/Image optimization */}
                       <Image
                         src={h.imageUrl}
                         alt={h.commonName}
@@ -298,17 +373,25 @@ export default function PlayClient() {
         ) : (
           <>
             <div className="imageWrap">
+              {/* Main gameplay image: plain <img> for zero optimizer latency, with eager load */}
               {card?.imageUrl && (
-                <Image
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
                   src={card.imageUrl}
                   alt={card.commonName || "Unknown animal"}
-                  fill
-                  priority
-                  unoptimized
-                  sizes="(max-width: 900px) 100vw, 900px"
-                  onLoadingComplete={handleImageLoaded}
-                  onError={handleImageError}
-                  style={{ objectFit: "cover" }}
+                  onLoad={() => setImageReady(true)}
+                  onError={() => advanceCard()}
+                  decoding="async"
+                  loading="eager"
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover"
+                  }}
                 />
               )}
             </div>
