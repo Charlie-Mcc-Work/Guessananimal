@@ -1,4 +1,21 @@
 // app/play/page.tsx
+import { Suspense } from "react";
+
+/** Prevent static prerendering and CSR bailout errors on Vercel */
+export const dynamic = "force-dynamic";   // or: export const revalidate = 0;
+
+function PageWrapper() {
+  return (
+    <Suspense fallback={<div style={{ padding: 24 }}>Loading game…</div>}>
+      <PlayInner />
+    </Suspense>
+  );
+}
+export default PageWrapper;
+
+/* ----------------- everything below is your existing code ----------------- */
+// Turn the original default export into an inner client component:
+
 "use client";
 
 import Image from "next/image";
@@ -8,8 +25,8 @@ import { useSearchParams } from "next/navigation";
 
 type Card = {
   imageUrl: string;
-  commonName: string;      // English
-  scientificName: string;  // Latin
+  commonName: string;
+  scientificName: string;
   license: string;
   source: string;
   attributions: string[];
@@ -52,7 +69,7 @@ function seqEqual(a: string[], b: string[]) {
   return true;
 }
 
-export default function Play() {
+function PlayInner() {
   const searchParams = useSearchParams();
   const modeParam = (searchParams.get("mode") || "normal").toLowerCase();
   const perQuestion = MODE_LIMITS[modeParam] ?? MODE_LIMITS.normal;
@@ -117,7 +134,6 @@ export default function Play() {
       setPostLeft(prev => {
         const next = prev > 0 ? prev - 1 : 0;
         if (next === 0) {
-          // clear interval first, then call the latest next function
           clearPostTimer();
           goNextRef.current();
         }
@@ -214,9 +230,7 @@ export default function Play() {
   };
 
   const handleNext = useCallback(() => {
-    // guard against unintended calls
     if (!revealedRef.current || finalShownRef.current) return;
-
     clearPostTimer();
 
     if (qIndexRef.current + 1 >= ROUND_SIZE) {
@@ -226,7 +240,6 @@ export default function Play() {
     setQIndex(i => i + 1);
     fetchCardUnique();
   }, []);
-  // expose latest handleNext to the interval via ref
   useEffect(() => { goNextRef.current = handleNext; }, [handleNext]);
 
   const difficultyBadge = useMemo(() => (hard ? "Hard (silhouette)" : "Normal"), [hard]);
@@ -239,7 +252,6 @@ export default function Play() {
     startQuestionTimer();
   }
   function handleImageError() {
-    // try a different card if this one fails to load
     fetchCardUnique();
   }
 
