@@ -6,13 +6,12 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
 type Card = {
-  imageUrl: string;
-  commonName: string;      // English
-  scientificName: string;  // Latin
+  imageUrl: string;          // image URL
+  commonName: string;        // English name
+  scientificName: string;    // Latin name
   license: string;
   source: string;
   attributions: string[];
-  silhouette?: boolean;
 };
 
 type HistoryEntry = {
@@ -77,7 +76,7 @@ export default function PlayClient() {
   const questionTimerRef = useRef<number | null>(null);
   const postTimerRef = useRef<number | null>(null);
 
-  // refs to avoid stale-closure issues inside intervals
+  // refs to avoid stale closures
   const revealedRef = useRef(revealed);
   const finalShownRef = useRef(finalShown);
   const qIndexRef = useRef(qIndex);
@@ -89,7 +88,26 @@ export default function PlayClient() {
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // ---- timer helpers ----
+  // ---------- variable blur ----------
+  // Blur that can be fixed (hard mode) or animated to sharpen over time.
+  const MAX_BLUR = 20;                     // starting blur when the image first shows in hard mode
+  const [blurLevel, setBlurLevel] = useState(0); // in px
+
+  // When hard mode toggles, reset the blur baseline (if not revealed yet)
+  useEffect(() => {
+    if (!revealed) {
+      setBlurLevel(hard ? MAX_BLUR : 0);
+    }
+  }, [hard, revealed]);
+
+  // As the timer counts down in hard mode, gradually un-blur the image.
+  useEffect(() => {
+    if (hard && imageReady && !revealed) {
+      const fraction = Math.max(0, Math.min(1, timeLeft / perQuestion)); // 1 → 0
+      setBlurLevel(Math.ceil(MAX_BLUR * fraction));
+    }
+  }, [timeLeft, hard, imageReady, revealed, perQuestion]);
+
   function clearQuestionTimer() {
     if (questionTimerRef.current !== null) {
       window.clearInterval(questionTimerRef.current);
@@ -142,7 +160,8 @@ export default function PlayClient() {
           setSeenInRound(prev => new Set(prev).add(data.imageUrl));
           setTimeout(() => inputRef.current?.focus(), 50);
           setLoading(false);
-          // Wait for image to load to start timer
+          // reset blur for the new image based on current mode
+          setBlurLevel(hard ? MAX_BLUR : 0);
           return;
         }
       } catch (e) {
@@ -184,6 +203,7 @@ export default function PlayClient() {
     clearQuestionTimer();
     setPoints(p => p + pts);
     setRevealed(true);
+    setBlurLevel(0);          // show the clear image after reveal
     startPostTimer();
     setHistory(h => [...h, {
       imageUrl: card.imageUrl,
@@ -224,7 +244,7 @@ export default function PlayClient() {
   }, []);
   useEffect(() => { goNextRef.current = handleNext; }, [handleNext]);
 
-  const difficultyBadge = useMemo(() => (hard ? "Hard (silhouette)" : "Normal"), [hard]);
+  const difficultyBadge = useMemo(() => (hard ? "Hard (blur)" : "Normal"), [hard]);
   const progress = `${qIndex + 1} / ${ROUND_SIZE}`;
   const questionUrgent = imageReady && !revealed && timeLeft <= 3;
   const postUrgent = revealed && !finalShown && postLeft <= 5;
@@ -259,7 +279,10 @@ export default function PlayClient() {
               <input
                 type="checkbox"
                 checked={hard}
-                onChange={(e) => setHard(e.target.checked)}
+                onChange={(e) => {
+                  setHard(e.target.checked);
+                  // blurLevel resets via effect; no need to set here
+                }}
                 style={{ marginRight: 8 }}
                 disabled={finalShown}
               />
@@ -280,7 +303,13 @@ export default function PlayClient() {
                 return (
                   <div key={idx} className={`summaryCard ${status}`}>
                     <div className="thumb">
-                      <Image src={h.imageUrl} alt={h.commonName} fill sizes="(max-width: 400px) 100vw, 33vw" style={{ objectFit: "cover" }}/>
+                      <Image
+                        src={h.imageUrl}
+                        alt={h.commonName}
+                        fill
+                        sizes="(max-width: 400px) 100vw, 33vw"
+                        style={{ objectFit: "cover" }}
+                      />
                     </div>
                     <h3 className={`summaryTitle ${status}`}>
                       {idx + 1}. {h.commonName}{" "}
@@ -304,7 +333,7 @@ export default function PlayClient() {
           </>
         ) : (
           <>
-            <div className={`imageWrap ${hard ? "silhouette" : ""}`}>
+            <div className="imageWrap">
               {card?.imageUrl && (
                 <Image
                   src={card.imageUrl}
@@ -313,7 +342,11 @@ export default function PlayClient() {
                   priority
                   onLoadingComplete={handleImageLoaded}
                   onError={handleImageError}
-                  style={{ objectFit: "cover" }}
+                  style={{
+                    objectFit: "cover",
+                    filter: `blur(${blurLevel}px)`,
+                    transition: "filter 250ms linear"
+                  }}
                 />
               )}
             </div>
