@@ -1,10 +1,9 @@
-// app/api/card/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
 
-export const runtime = "edge";            // fast startup for small handlers
-export const dynamic = "force-dynamic";   // never pre-render
-export const revalidate = 0;              // disable ISR
-export const fetchCache = "force-no-store";
+export const runtime = 'edge';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 type Card = {
   imageUrl: string;
@@ -15,43 +14,26 @@ type Card = {
   attributions: string[];
 };
 
-// Map iNaturalist license_code -> human label
 function licenseLabel(code?: string | null): string {
-  if (!code) return "All rights reserved / unknown";
+  if (!code) return 'All rights reserved / unknown';
   const c = code.toLowerCase();
-  switch (c) {
-    case "cc0":
-      return "CC0";
-    case "cc-by":
-      return "CC BY";
-    case "cc-by-sa":
-      return "CC BY-SA";
-    case "cc-by-nc":
-      return "CC BY-NC";
-    case "cc-by-nd":
-      return "CC BY-ND";
-    case "cc-by-nc-sa":
-      return "CC BY-NC-SA";
-    case "cc-by-nc-nd":
-      return "CC BY-NC-ND";
-    default:
-      return code.toUpperCase();
-  }
+  if (c === 'cc0') return 'CC0';
+  if (c === 'cc-by') return 'CC BY';
+  if (c === 'cc-by-sa') return 'CC BY-SA';
+  if (c === 'cc-by-nc') return 'CC BY-NC';
+  if (c === 'cc-by-nd') return 'CC BY-ND';
+  if (c === 'cc-by-nc-sa') return 'CC BY-NC-SA';
+  if (c === 'cc-by-nc-nd') return 'CC BY-NC-ND';
+  return code.toUpperCase();
 }
 
-// Prefer a large image; iNat photo URLs can be resized by replacing "square"
 function bestPhotoUrl(photo: any): string | null {
-  // iNat often provides multiple fields. Prefer original_url/large_url if present.
   if (photo?.original_url) return photo.original_url as string;
   if (photo?.large_url) return photo.large_url as string;
-  if (photo?.url) {
-    // Typical pattern: .../photos/<id>/square.jpg
-    return (photo.url as string).replace("square", "large");
-  }
+  if (photo?.url) return (photo.url as string).replace('square', 'large');
   return null;
 }
 
-// Build a Card object from an iNaturalist observation
 function toCard(obs: any): Card | null {
   if (!obs || !obs.taxon) return null;
   const photo = Array.isArray(obs.photos) && obs.photos.length > 0 ? obs.photos[0] : null;
@@ -61,20 +43,18 @@ function toCard(obs: any): Card | null {
   const common =
     obs.taxon.preferred_common_name ||
     obs.taxon.english_common_name ||
-    obs.taxon.name || // fallback (scientific)
-    "Unknown";
+    obs.taxon.name ||
+    'Unknown';
 
-  const scientific = obs.taxon.name || "Unknown";
+  const scientific = obs.taxon.name || 'Unknown';
   const license = licenseLabel(photo?.license_code || obs.license_code);
-  const source = obs.uri || "https://www.inaturalist.org";
+  const source = obs.uri || 'https://www.inaturalist.org';
   const attributions: string[] = [];
-
-  // Try to add photographer & observer attribution if available
   if (photo?.attribution) attributions.push(photo.attribution);
   if (obs?.user?.name || obs?.user?.login) {
-    attributions.push("Observer: " + (obs.user.name || obs.user.login));
+    attributions.push('Observer: ' + (obs.user.name || obs.user.login));
   }
-  attributions.push("iNaturalist");
+  attributions.push('iNaturalist');
 
   return {
     imageUrl,
@@ -86,72 +66,78 @@ function toCard(obs: any): Card | null {
   };
 }
 
-async function fetchRandomINatObservation(): Promise<Card | null> {
-  // Notes:
-  // - has[]=photos ensures the observation has at least one photo
-  // - quality_grade=research yields better-validated IDs (tweak if you want more variety)
-  // - photo_license limits to reusable images (adjust to your needs)
-  // - order_by=random gives a random record each time
-  // - locale=en helps get English common names when available
-  const params = new URLSearchParams();
-  params.set("per_page", "1");
-  params.append("has[]", "photos");
-  params.set("quality_grade", "research");
-  params.set("photo_license", "cc0,cc-by,cc-by-sa,cc-by-nc"); // adjust if you want NC or not
-  params.set("order_by", "random");
-  params.set("order", "desc");
-  params.set("locale", "en");
-  params.set("preferred_place_id", "1"); // global; can be tuned if you want
+function shuffle<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  }
+  return arr;
+}
 
-  const url = "https://api.inaturalist.org/v1/observations?" + params.toString();
+async function fetchBatchINat(count: number): Promise<Card[]> {
+  // Fetch more than we need, then filter to good items
+  const perPage = Math.min(Math.max(count * 3, 30), 100);
+  const params = new URLSearchParams();
+  params.set('per_page', String(perPage));
+  params.append('has[]', 'photos');
+  params.set('quality_grade', 'research');
+  params.set('photo_license', 'cc0,cc-by,cc-by-sa,cc-by-nc');
+  params.set('order_by', 'random');
+  params.set('order', 'desc');
+  params.set('locale', 'en');
+  params.set('preferred_place_id', '1');
+
+  const url = 'https://api.inaturalist.org/v1/observations?' + params.toString();
 
   const res = await fetch(url, {
-    // Edge runtime fetch; avoid caching so each call is fresh
-    cache: "no-store",
-    headers: {
-      "Accept": "application/json",
-    },
+    cache: 'no-store',
+    headers: { 'Accept': 'application/json' },
   });
 
-  if (!res.ok) {
-    return null;
-  }
-  const json = await res.json().catch(() => null) as any;
-  const results = json?.results;
-  if (!Array.isArray(results) || results.length === 0) return null;
+  if (!res.ok) return [];
 
-  const card = toCard(results[0]);
-  return card;
+  const json = await res.json().catch(() => null) as any;
+  const results = Array.isArray(json?.results) ? json.results : [];
+  const cards = results.map(toCard).filter(Boolean) as Card[];
+
+  // De-dup by imageUrl and shuffle, then keep only "count"
+  const seen = new Set<string>();
+  const dedup: Card[] = [];
+  for (const c of cards) {
+    if (!seen.has(c.imageUrl)) {
+      seen.add(c.imageUrl);
+      dedup.push(c);
+    }
+  }
+  shuffle(dedup);
+  return dedup.slice(0, count);
 }
 
 export async function GET() {
-  // Try a few times in case we get an observation without a usable photo URL
-  for (let i = 0; i < 3; i++) {
+  // Try a couple of times to get a decent batch
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const card = await fetchRandomINatObservation();
-      if (card) {
-        return NextResponse.json(card, {
-          headers: {
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "CDN-Cache-Control": "no-store",
-            "Vercel-CDN-Cache-Control": "no-store",
-          },
-        });
+      const items = await fetchBatchINat(24);
+      if (items.length > 0) {
+        return NextResponse.json(
+          { items },
+          {
+            headers: {
+              'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+              'CDN-Cache-Control': 'no-store',
+              'Vercel-CDN-Cache-Control': 'no-store',
+            },
+          }
+        );
       }
     } catch {
-      // ignore and retry
+      // try again
     }
   }
 
-  // If iNaturalist is temporarily unavailable, fail gracefully
   return NextResponse.json(
-    { error: "Upstream unavailable. Try again." },
-    {
-      status: 502,
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    }
+    { items: [] },
+    { status: 502, headers: { 'Cache-Control': 'no-store' } }
   );
 }
 

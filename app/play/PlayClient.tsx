@@ -35,6 +35,9 @@ const STOPWORDS = new Set([
   'common', 'eastern', 'western', 'northern', 'southern',
 ]);
 
+const QUEUE_MIN = 5;     // keep at least this many prefetched
+const QUEUE_FETCH = 16;  // fetch this many when refilling
+
 function tokenizeMeaningful(s: string): string[] {
   return s
     .toLowerCase()
@@ -67,7 +70,7 @@ export default function PlayClient() {
   const modeLabel = modeParam === 'fast' ? 'Fast (10s)' : modeParam === 'slow' ? 'Slow (30s)' : 'Normal (20s)';
 
   const [card, setCard] = useState<Card | null>(null);
-  const [nextCard, setNextCard] = useState<Card | null>(null);
+  const [queue, setQueue] = useState<Card[]>([]);
   const [loading, setLoading] = useState(false);
   const [imageReady, setImageReady] = useState(false);
   const [guess, setGuess] = useState('');
@@ -76,20 +79,16 @@ export default function PlayClient() {
   const [qIndex, setQIndex] = useState(0);
   const [points, setPoints] = useState(0);
   const [finalShown, setFinalShown] = useState(false);
-  const [seenInRound, setSeenInRound] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
-  // timers
-  const [timeLeft, setTimeLeft] = useState(perQuestion); // pre-reveal
-  const [postLeft, setPostLeft] = useState(30);          // post-reveal
+  const [timeLeft, setTimeLeft] = useState(perQuestion);
+  const [postLeft, setPostLeft] = useState(30);
   const questionTimerRef = useRef<number | null>(null);
   const postTimerRef = useRef<number | null>(null);
 
-  // image load timeout + advancing guard
   const imageTimeoutRef = useRef<number | null>(null);
   const advancingRef = useRef(false);
 
-  // stable refs for timers
   const revealedRef = useRef(revealed);
   const finalShownRef = useRef(finalShown);
   const qIndexRef = useRef(qIndex);
@@ -134,7 +133,6 @@ export default function PlayClient() {
       });
     }, 1000);
   }
-
   function clearImageTimeout() {
     if (imageTimeoutRef.current !== null) {
       window.clearTimeout(imageTimeoutRef.current);
@@ -145,20 +143,12 @@ export default function PlayClient() {
     clearImageTimeout();
     imageTimeoutRef.current = window.setTimeout(() => {
       if (!imageReady && !advancingRef.current) {
-        if (card && card.imageUrl) {
-          setSeenInRound((prev) => {
-            const n = new Set(prev);
-            n.add(card.imageUrl);
-            return n;
-          });
-        }
         advancingRef.current = true;
         advanceCard().finally(() => { advancingRef.current = false; });
       }
     }, ms);
   }
 
-  // Preload an image URL into cache
   function preloadImage(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const img = new window.Image();
@@ -169,20 +159,23 @@ export default function PlayClient() {
     });
   }
 
-  async function fetchOneUnique(already: Set<string>, maxTries = 10): Promise<Card | null> {
-    let tries = 0;
-    while (tries++ < maxTries) {
-      try {
-        const res = await fetch('/api/card?ts=' + Date.now(), { cache: 'no-store' });
-        const data: Card = await res.json();
-        if (data && data.imageUrl && !already.has(data.imageUrl)) {
-          return data;
-        }
-      } catch (e) {
-        console.error(e);
-      }
+  async function refillQueue(minNeeded: number) {
+    try {
+      const res = await fetch('/api/cards?ts=' + Date.now(), { cache: 'no-store' });
+      const data = await res.json().catch(() => null) as any;
+      const items = Array.isArray(data?.items) ? data.items : [];
+      // Preload first few to make the next transitions instant
+      const toPreload = items.slice(0, 6);
+      await Promise.allSettled(toPreload.map((c: Card) => preloadImage(c.imageUrl)));
+      setQueue((old) => old.concat(items));
+    } catch (e) {
+      console.error('refillQueue error', e);
     }
-    return null;
+  }
+
+  async function ensureQueue() {
+    if (queue.length >= QUEUE_MIN) return;
+    await refillQueue(QUEUE_FETCH);
   }
 
   async function initRound() {
@@ -193,28 +186,28 @@ export default function PlayClient() {
     clearQuestionTimer();
     clearPostTimer();
 
-    const seen = new Set(seenInRound);
-    const current = await fetchOneUnique(seen);
-    if (!current) { setLoading(false); return; }
-    setCard(current);
-    console.log('Card current:', current);
-    seen.add(current.imageUrl);
-    setSeenInRound(seen);
+    // prime the queue if empty
+    if (queue.length < 1) {
+      await ensureQueue();
+    }
+    // if still empty, try again once
+    if (queue.length < 1) {
+      await ensureQueue();
+    }
+
+    const next = queue.length > 0 ? queue[0] : null;
+    if (!next) { setLoading(false); return; }
+
+    setCard(next);
+    setQueue((old) => old.slice(1));
     setTimeout(() => inputRef.current?.focus(), 50);
     setLoading(false);
 
-    // arm timeout for this image
     setImageReady(false);
-    armImageTimeout(10000); // 10s
+    armImageTimeout(10000);
 
-    // prefetch next
-    const pre = await fetchOneUnique(seen);
-    if (pre) {
-      try { await preloadImage(pre.imageUrl); } catch {}
-      setNextCard(pre);
-    } else {
-      setNextCard(null);
-    }
+    // keep queue topped up
+    ensureQueue();
   }
 
   async function advanceCard() {
@@ -226,49 +219,24 @@ export default function PlayClient() {
     clearPostTimer();
     clearImageTimeout();
 
-    const seen = new Set(seenInRound);
-
-    if (nextCard && !seen.has(nextCard.imageUrl)) {
-      setCard(nextCard);
-      console.log('Card next (prefetched):', nextCard);
-      seen.add(nextCard.imageUrl);
-      setSeenInRound(seen);
+    // take next from queue
+    if (queue.length < 1) {
+      await ensureQueue();
+    }
+    const next = queue.length > 0 ? queue[0] : null;
+    if (next) {
+      setCard(next);
+      setQueue((old) => old.slice(1));
       setTimeout(() => inputRef.current?.focus(), 50);
       setLoading(false);
-
       setImageReady(false);
       armImageTimeout(10000);
-
-      const pre = await fetchOneUnique(seen);
-      if (pre) {
-        try { await preloadImage(pre.imageUrl); } catch {}
-        setNextCard(pre);
-      } else {
-        setNextCard(null);
-      }
+      ensureQueue();
       return;
     }
 
-    const fresh = await fetchOneUnique(seen);
-    if (fresh) {
-      try { await preloadImage(fresh.imageUrl); } catch {}
-      setCard(fresh);
-      console.log('Card next (fresh):', fresh);
-      seen.add(fresh.imageUrl);
-      setSeenInRound(seen);
-      setTimeout(() => inputRef.current?.focus(), 50);
-      setImageReady(false);
-      armImageTimeout(10000);
-    }
+    // still nothing (rare)
     setLoading(false);
-
-    const pre = await fetchOneUnique(seen);
-    if (pre) {
-      try { await preloadImage(pre.imageUrl); } catch {}
-      setNextCard(pre);
-    } else {
-      setNextCard(null);
-    }
   }
 
   useEffect(() => {
@@ -280,7 +248,6 @@ export default function PlayClient() {
     return () => { clearQuestionTimer(); clearPostTimer(); clearImageTimeout(); };
   }, []);
 
-  // auto-submit when pre-reveal timer hits 0
   useEffect(() => {
     if (imageReady && timeLeft === 0 && !revealedRef.current && card) {
       autoSubmit();
@@ -420,13 +387,6 @@ export default function PlayClient() {
                   onLoad={() => { clearImageTimeout(); setImageReady(true); startQuestionTimer(); }}
                   onError={() => {
                     clearImageTimeout();
-                    if (card && card.imageUrl) {
-                      setSeenInRound((prev) => {
-                        const n = new Set(prev);
-                        n.add(card.imageUrl);
-                        return n;
-                      });
-                    }
                     if (!advancingRef.current) {
                       advancingRef.current = true;
                       advanceCard().finally(() => { advancingRef.current = false; });
