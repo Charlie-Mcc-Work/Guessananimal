@@ -61,9 +61,7 @@ export default function PlayClient() {
   const [imageReady, setImageReady] = useState(false);
   const [guess, setGuess] = useState("");
   const [revealed, setRevealed] = useState(false);
-  const [hard, setHard] = useState(false);
 
-  const [round, setRound] = useState(1);
   const [qIndex, setQIndex] = useState(0);
   const [points, setPoints] = useState(0);
   const [finalShown, setFinalShown] = useState(false);
@@ -87,26 +85,6 @@ export default function PlayClient() {
   useEffect(() => { qIndexRef.current = qIndex; }, [qIndex]);
 
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // ---------- variable blur ----------
-  // Blur that can be fixed (hard mode) or animated to sharpen over time.
-  const MAX_BLUR = 20;                     // starting blur when the image first shows in hard mode
-  const [blurLevel, setBlurLevel] = useState(0); // in px
-
-  // When hard mode toggles, reset the blur baseline (if not revealed yet)
-  useEffect(() => {
-    if (!revealed) {
-      setBlurLevel(hard ? MAX_BLUR : 0);
-    }
-  }, [hard, revealed]);
-
-  // As the timer counts down in hard mode, gradually un-blur the image.
-  useEffect(() => {
-    if (hard && imageReady && !revealed) {
-      const fraction = Math.max(0, Math.min(1, timeLeft / perQuestion)); // 1 → 0
-      setBlurLevel(Math.ceil(MAX_BLUR * fraction));
-    }
-  }, [timeLeft, hard, imageReady, revealed, perQuestion]);
 
   function clearQuestionTimer() {
     if (questionTimerRef.current !== null) {
@@ -153,15 +131,15 @@ export default function PlayClient() {
     let tries = 0;
     while (tries++ < maxTries) {
       try {
-        const res = await fetch(`/api/card${hard ? "?silhouette=1" : ""}`, { cache: "no-store" });
+        // IMPORTANT: no silhouette param; add ts to bust caches
+        const res = await fetch('/api/card?ts=${Date.now()}', { cache: "no-store" });
         const data: Card = await res.json();
         if (data?.imageUrl && !seenInRound.has(data.imageUrl)) {
           setCard(data);
           setSeenInRound(prev => new Set(prev).add(data.imageUrl));
           setTimeout(() => inputRef.current?.focus(), 50);
           setLoading(false);
-          // reset blur for the new image based on current mode
-          setBlurLevel(hard ? MAX_BLUR : 0);
+          // wait for image load to start timer
           return;
         }
       } catch (e) {
@@ -174,7 +152,7 @@ export default function PlayClient() {
   useEffect(() => {
     fetchCardUnique();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hard, perQuestion]);
+  }, [perQuestion]);
 
   useEffect(() => () => { clearQuestionTimer(); clearPostTimer(); }, []);
 
@@ -203,7 +181,6 @@ export default function PlayClient() {
     clearQuestionTimer();
     setPoints(p => p + pts);
     setRevealed(true);
-    setBlurLevel(0);          // show the clear image after reveal
     startPostTimer();
     setHistory(h => [...h, {
       imageUrl: card.imageUrl,
@@ -244,7 +221,6 @@ export default function PlayClient() {
   }, []);
   useEffect(() => { goNextRef.current = handleNext; }, [handleNext]);
 
-  const difficultyBadge = useMemo(() => (hard ? "Hard (blur)" : "Normal"), [hard]);
   const progress = `${qIndex + 1} / ${ROUND_SIZE}`;
   const questionUrgent = imageReady && !revealed && timeLeft <= 3;
   const postUrgent = revealed && !finalShown && postLeft <= 5;
@@ -275,19 +251,6 @@ export default function PlayClient() {
               </span>
             )}
             <span className="badge">Points: {points}</span>
-            <label className="badge" style={{cursor:"pointer"}}>
-              <input
-                type="checkbox"
-                checked={hard}
-                onChange={(e) => {
-                  setHard(e.target.checked);
-                  // blurLevel resets via effect; no need to set here
-                }}
-                style={{ marginRight: 8 }}
-                disabled={finalShown}
-              />
-              {difficultyBadge}
-            </label>
           </div>
         </div>
 
@@ -342,11 +305,7 @@ export default function PlayClient() {
                   priority
                   onLoadingComplete={handleImageLoaded}
                   onError={handleImageError}
-                  style={{
-                    objectFit: "cover",
-                    filter: `blur(${blurLevel}px)`,
-                    transition: "filter 250ms linear"
-                  }}
+                  style={{ objectFit: "cover" }}
                 />
               )}
             </div>
