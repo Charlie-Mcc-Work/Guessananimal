@@ -1,7 +1,7 @@
-import { Suspense } from "react";
-import PlayClient from "./PlayClient";
+import { Suspense } from 'react';
+import PlayClient from './PlayClient';
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
 export default function Page() {
   return (
