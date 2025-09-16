@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -28,18 +30,39 @@ type HistoryEntry = {
 
 const ROUND_SIZE = 10;
 const MODE_LIMITS: Record<string, number> = { fast: 10, normal: 20, slow: 30 };
-const STOPWORDS = new Set(["the","a","an","of","and","&","common","eastern","western","northern","southern"]);
+const STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "of",
+  "and",
+  "&",
+  "common",
+  "eastern",
+  "western",
+  "northern",
+  "southern",
+]);
 
 function tokenizeMeaningful(s: string): string[] {
-  return s.toLowerCase().replace(/[^a-z\s-]/g, " ").split(/\s+/)
-    .filter(Boolean).filter(w => !STOPWORDS.has(w)).filter(w => w.length >= 3);
+  return s
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((w) => !STOPWORDS.has(w))
+    .filter((w) => w.length >= 3);
 }
 function lcsLength(a: string[], b: string[]) {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
     }
   }
   return dp[m][n];
@@ -54,10 +77,15 @@ export default function PlayClient() {
   const searchParams = useSearchParams();
   const modeParam = (searchParams.get("mode") || "normal").toLowerCase();
   const perQuestion = MODE_LIMITS[modeParam] ?? MODE_LIMITS.normal;
-  const modeLabel = modeParam === "fast" ? "Fast (10s)" : modeParam === "slow" ? "Slow (30s)" : "Normal (20s)";
+  const modeLabel =
+    modeParam === "fast"
+      ? "Fast (10s)"
+      : modeParam === "slow"
+      ? "Slow (30s)"
+      : "Normal (20s)";
 
   const [card, setCard] = useState<Card | null>(null);
-  const [nextCard, setNextCard] = useState<Card | null>(null);       // prefetch buffer
+  const [nextCard, setNextCard] = useState<Card | null>(null);
   const [loading, setLoading] = useState(false);
   const [imageReady, setImageReady] = useState(false);
   const [guess, setGuess] = useState("");
@@ -71,7 +99,7 @@ export default function PlayClient() {
 
   // timers
   const [timeLeft, setTimeLeft] = useState(perQuestion); // pre-reveal
-  const [postLeft, setPostLeft] = useState(30);          // post-reveal
+  const [postLeft, setPostLeft] = useState(30); // post-reveal
   const questionTimerRef = useRef<number | null>(null);
   const postTimerRef = useRef<number | null>(null);
 
@@ -81,9 +109,15 @@ export default function PlayClient() {
   const qIndexRef = useRef(qIndex);
   const goNextRef = useRef<() => void>(() => {});
 
-  useEffect(() => { revealedRef.current = revealed; }, [revealed]);
-  useEffect(() => { finalShownRef.current = finalShown; }, [finalShown]);
-  useEffect(() => { qIndexRef.current = qIndex; }, [qIndex]);
+  useEffect(() => {
+    revealedRef.current = revealed;
+  }, [revealed]);
+  useEffect(() => {
+    finalShownRef.current = finalShown;
+  }, [finalShown]);
+  useEffect(() => {
+    qIndexRef.current = qIndex;
+  }, [qIndex]);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -103,14 +137,14 @@ export default function PlayClient() {
     clearQuestionTimer();
     setTimeLeft(perQuestion);
     questionTimerRef.current = window.setInterval(() => {
-      setTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
+      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
   }
   function startPostTimer() {
     clearPostTimer();
     setPostLeft(30);
     postTimerRef.current = window.setInterval(() => {
-      setPostLeft(prev => {
+      setPostLeft((prev) => {
         const next = prev > 0 ? prev - 1 : 0;
         if (next === 0) {
           clearPostTimer();
@@ -126,19 +160,23 @@ export default function PlayClient() {
     return new Promise((resolve, reject) => {
       const img = new window.Image();
       img.decoding = "async";
-      img.referrerPolicy = "no-referrer";
-      img.crossOrigin = "anonymous";
       img.onload = () => resolve();
       img.onerror = () => reject();
       img.src = url;
     });
   }
 
-  async function fetchOneUnique(already: Set<string>, maxTries = 6): Promise<Card | null> {
+  async function fetchOneUnique(
+    already: Set<string>,
+    maxTries = 6
+  ): Promise<Card | null> {
     let tries = 0;
     while (tries++ < maxTries) {
       try {
-        const res = await fetch(`/api/card?ts=${Date.now()}', { cache: "no-store" });
+        // NOTE: make sure "no-store" stays exactly like this (ASCII quotes)
+        const res = await fetch(`/api/card?ts=${Date.now()}', {
+          cache: "no-store",
+        });
         const data: Card = await res.json();
         if (data?.imageUrl && !already.has(data.imageUrl)) {
           return data;
@@ -150,7 +188,7 @@ export default function PlayClient() {
     return null;
   }
 
-  // Fetch current card (cold start) and prefetch the next one in parallel
+  // Fetch current card (cold start) and prefetch the next one
   async function initRound() {
     setLoading(true);
     setRevealed(false);
@@ -171,17 +209,19 @@ export default function PlayClient() {
     setTimeout(() => inputRef.current?.focus(), 50);
     setLoading(false);
 
-    // kick off prefetch for the next card (best-effort)
+    // prefetch next
     const pre = await fetchOneUnique(seen);
     if (pre) {
-      try { await preloadImage(pre.imageUrl); } catch {}
+      try {
+        await preloadImage(pre.imageUrl);
+      } catch {}
       setNextCard(pre);
     } else {
       setNextCard(null);
     }
   }
 
-  // Get a new card after Next is clicked or auto-advance
+  // Advance to next card (use prefetched if available)
   async function advanceCard() {
     setLoading(true);
     setRevealed(false);
@@ -192,7 +232,6 @@ export default function PlayClient() {
 
     const seen = new Set(seenInRound);
 
-    // If we have a prefetched card, use it instantly
     if (nextCard && !seen.has(nextCard.imageUrl)) {
       setCard(nextCard);
       seen.add(nextCard.imageUrl);
@@ -200,10 +239,12 @@ export default function PlayClient() {
       setTimeout(() => inputRef.current?.focus(), 50);
       setLoading(false);
 
-      // Preload the following card in background
+      // stage following card
       const pre = await fetchOneUnique(seen);
       if (pre) {
-        try { await preloadImage(pre.imageUrl); } catch {}
+        try {
+          await preloadImage(pre.imageUrl);
+        } catch {}
         setNextCard(pre);
       } else {
         setNextCard(null);
@@ -211,10 +252,12 @@ export default function PlayClient() {
       return;
     }
 
-    // Fallback: fetch a fresh one now
+    // fallback
     const fresh = await fetchOneUnique(seen);
     if (fresh) {
-      try { await preloadImage(fresh.imageUrl); } catch {}
+      try {
+        await preloadImage(fresh.imageUrl);
+      } catch {}
       setCard(fresh);
       seen.add(fresh.imageUrl);
       setSeenInRound(seen);
@@ -222,10 +265,12 @@ export default function PlayClient() {
     }
     setLoading(false);
 
-    // And try to stage the next one
+    // stage next
     const pre = await fetchOneUnique(seen);
     if (pre) {
-      try { await preloadImage(pre.imageUrl); } catch {}
+      try {
+        await preloadImage(pre.imageUrl);
+      } catch {}
       setNextCard(pre);
     } else {
       setNextCard(null);
@@ -237,7 +282,13 @@ export default function PlayClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perQuestion]);
 
-  useEffect(() => () => { clearQuestionTimer(); clearPostTimer(); }, []);
+  useEffect(
+    () => () => {
+      clearQuestionTimer();
+      clearPostTimer();
+    },
+    []
+  );
 
   // auto-submit when pre-reveal timer hits 0
   useEffect(() => {
@@ -252,8 +303,8 @@ export default function PlayClient() {
     if (ansTokens.length === 0) return { pts: 0, correct: false };
     const seen = new Set<string>();
     const guessTokensRaw = tokenizeMeaningful(g)
-      .filter(t => ansTokens.includes(t))
-      .filter(t => (seen.has(t) ? false : (seen.add(t), true)))
+      .filter((t) => ansTokens.includes(t))
+      .filter((t) => (seen.has(t) ? false : (seen.add(t), true)))
       .slice(0, ansTokens.length);
     if (seqEqual(ansTokens, guessTokensRaw)) return { pts: 10, correct: true };
     return { pts: lcsLength(ansTokens, guessTokensRaw), correct: false };
@@ -262,20 +313,23 @@ export default function PlayClient() {
   function finalizeCurrent(pts: number, correct: boolean) {
     if (!card) return;
     clearQuestionTimer();
-    setPoints(p => p + pts);
+    setPoints((p) => p + pts);
     setRevealed(true);
     startPostTimer();
-    setHistory(h => [...h, {
-      imageUrl: card.imageUrl,
-      commonName: card.commonName,
-      scientificName: card.scientificName,
-      guess,
-      correct,
-      points: pts,
-      source: card.source,
-      license: card.license,
-      attributions: card.attributions || []
-    }]);
+    setHistory((h) => [
+      ...h,
+      {
+        imageUrl: card.imageUrl,
+        commonName: card.commonName,
+        scientificName: card.scientificName,
+        guess,
+        correct,
+        points: pts,
+        source: card.source,
+        license: card.license,
+        attributions: card.attributions || [],
+      },
+    ]);
   }
 
   function autoSubmit() {
@@ -299,10 +353,12 @@ export default function PlayClient() {
       setFinalShown(true);
       return;
     }
-    setQIndex(i => i + 1);
+    setQIndex((i) => i + 1);
     advanceCard();
   }, []);
-  useEffect(() => { goNextRef.current = handleNext; }, [handleNext]);
+  useEffect(() => {
+    goNextRef.current = handleNext;
+  }, [handleNext]);
 
   const progress = `${qIndex + 1} / ${ROUND_SIZE}`;
   const questionUrgent = imageReady && !revealed && timeLeft <= 3;
@@ -331,17 +387,17 @@ export default function PlayClient() {
 
         {finalShown ? (
           <>
-            <p style={{fontSize:18, marginTop:10}}>
+            <p style={{ fontSize: 18, marginTop: 10 }}>
               🎉 <b>Round complete!</b> You scored <b>{points}</b> points.
             </p>
 
             <div className="summaryGrid">
               {history.map((h, idx) => {
-                const status = h.correct ? "correct" : h.points > 0 ? "partial" : "wrong";
+                const status =
+                  h.correct ? "correct" : h.points > 0 ? "partial" : "wrong";
                 return (
                   <div key={idx} className={`summaryCard ${status}`}>
                     <div className="thumb">
-                      {/* thumbnails keep Next/Image optimization */}
                       <Image
                         src={h.imageUrl}
                         alt={h.commonName}
@@ -352,30 +408,56 @@ export default function PlayClient() {
                     </div>
                     <h3 className={`summaryTitle ${status}`}>
                       {idx + 1}. {h.commonName}{" "}
-                      <span style={{color:"var(--muted)"}}>({h.scientificName})</span>
+                      <span style={{ color: "var(--muted)" }}>
+                        ({h.scientificName})
+                      </span>
                     </h3>
                     <div className="summaryMeta">
-                      <div><b>Your guess:</b> {h.guess || <em>(blank)</em>}</div>
-                      <div><b>Result:</b> {h.correct ? "Correct (10 pts)" : h.points > 0 ? `${h.points} pt${h.points === 1 ? "" : "s"} partial` : "No points"}</div>
-                      <div><b>License:</b> {h.license}</div>
-                      <div><b>Source:</b> <a href={h.source} target="_blank" rel="noreferrer">{h.source}</a></div>
-                      {h.attributions.length > 0 && (<div><b>Attribution:</b> {h.attributions.join(", ")}</div>)}
+                      <div>
+                        <b>Your guess:</b> {h.guess || <em>(blank)</em>}
+                      </div>
+                      <div>
+                        <b>Result:</b>{" "}
+                        {h.correct
+                          ? "Correct (10 pts)"
+                          : h.points > 0
+                          ? `${h.points} pt${h.points === 1 ? "" : "s"} partial`
+                          : "No points"}
+                      </div>
+                      <div>
+                        <b>License:</b> {h.license}
+                      </div>
+                      <div>
+                        <b>Source:</b>{" "}
+                        <a
+                          href={h.source}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {h.source}
+                        </a>
+                      </div>
+                      {h.attributions.length > 0 && (
+                        <div>
+                          <b>Attribution:</b> {h.attributions.join(", ")}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            <div style={{marginTop:16}}>
-              <Link className="btn" href="/">Back to Home (choose mode)</Link>
+            <div style={{ marginTop: 16 }}>
+              <Link className="btn" href="/">
+                Back to Home (choose mode)
+              </Link>
             </div>
           </>
         ) : (
           <>
             <div className="imageWrap">
-              {/* Main gameplay image: plain <img> for zero optimizer latency, with eager load */}
               {card?.imageUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={card.imageUrl}
                   alt={card.commonName || "Unknown animal"}
@@ -383,20 +465,19 @@ export default function PlayClient() {
                   onError={() => advanceCard()}
                   decoding="async"
                   loading="eager"
-                  referrerPolicy="no-referrer"
-                  crossOrigin="anonymous"
                   style={{
                     position: "absolute",
                     inset: 0,
                     width: "100%",
                     height: "100%",
-                    objectFit: "cover"
+                    objectFit: "cover",
                   }}
                 />
               )}
             </div>
             <div className="caption">
-              Images from open sources (iNaturalist / Wikimedia). Always attribute and follow the license.
+              Images from open sources (iNaturalist / Wikimedia). Always
+              attribute and follow the license.
             </div>
 
             <form onSubmit={handleSubmit} className="row" style={{ marginTop: 14 }}>
@@ -408,25 +489,48 @@ export default function PlayClient() {
                 placeholder="Type the English name…"
                 disabled={loading || !card || revealed}
               />
-              <button className="btn" disabled={loading || !guess || revealed}>Guess</button>
-              <button className="btn" type="button" onClick={handleNext} disabled={!revealed}>
+              <button className="btn" disabled={loading || !guess || revealed}>
+                Guess
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={handleNext}
+                disabled={!revealed}
+              >
                 {qIndex + 1 >= ROUND_SIZE ? "Finish" : "Next"}
               </button>
             </form>
 
             {revealed && card && (
               <div className="result">
-                <div><b>Answer:</b> {card.commonName} <span style={{color:"var(--muted)"}}>({card.scientificName})</span></div>
+                <div>
+                  <b>Answer:</b> {card.commonName}{" "}
+                  <span style={{ color: "var(--muted)" }}>
+                    ({card.scientificName})
+                  </span>
+                </div>
                 <div className="caption">
                   <b>License:</b> {card.license} &nbsp;|&nbsp; <b>Source:</b>{" "}
-                  <a href={card.source} target="_blank" rel="noreferrer">{card.source}</a>
-                  {card.attributions?.length > 0 && (<> &nbsp;|&nbsp; <b>Attribution:</b> {card.attributions.join(", ")}</>)}
+                  <a href={card.source} target="_blank" rel="noreferrer">
+                    {card.source}
+                  </a>
+                  {card.attributions?.length > 0 && (
+                    <>
+                      {" "}
+                      &nbsp;|&nbsp; <b>Attribution:</b>{" "}
+                      {card.attributions.join(", ")}
+                    </>
+                  )}
                 </div>
-                <div className="caption" style={{marginTop:6}}>
-                  <b>Scoring:</b> 10 for exact full-name match; otherwise points = number of correct words in the correct order (capped to answer length).
+                <div className="caption" style={{ marginTop: 6 }}>
+                  <b>Scoring:</b> 10 for exact full-name match; otherwise points
+                  = number of correct words in the correct order (capped to
+                  answer length).
                 </div>
-                <div className="caption" style={{marginTop:6}}>
-                  I’ll auto-advance in <b>{postLeft}s</b> if you don’t click <b>Next</b>.
+                <div className="caption" style={{ marginTop: 6 }}>
+                  I’ll auto-advance in <b>{postLeft}s</b> if you don’t click{" "}
+                  <b>Next</b>.
                 </div>
               </div>
             )}
