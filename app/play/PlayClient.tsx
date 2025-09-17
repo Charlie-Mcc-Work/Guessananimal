@@ -2,7 +2,6 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -35,8 +34,8 @@ const STOPWORDS = new Set([
   'common', 'eastern', 'western', 'northern', 'southern',
 ]);
 
-const QUEUE_MIN = 5;
-const QUEUE_FETCH = 16;
+const QUEUE_MIN = 6;
+const QUEUE_FETCH = 20;
 
 function tokenizeMeaningful(s: string): string[] {
   return s
@@ -163,9 +162,13 @@ export default function PlayClient() {
     try {
       const res = await fetch('/api/cards?ts=' + Date.now(), { cache: 'no-store' });
       const data = await res.json().catch(() => null) as any;
-      const items = Array.isArray(data?.items) ? data.items : [];
-      const toPreload = items.slice(0, 6);
-      await Promise.allSettled(toPreload.map((c: Card) => preloadImage(c.imageUrl)));
+      const items: Card[] = Array.isArray(data?.items) ? data.items : [];
+      if (items.length === 0) return;
+
+      // Preload a few to make transitions instant
+      const toPreload = items.slice(0, 8);
+      await Promise.allSettled(toPreload.map((c) => preloadImage(c.imageUrl)));
+
       setQueue((old) => old.concat(items));
     } catch (e) {
       console.error('refillQueue error', e);
@@ -177,22 +180,6 @@ export default function PlayClient() {
     await refillQueue();
   }
 
-  async function fetchFirstCard() {
-    try {
-      const res = await fetch('/api/card?ts=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) return;
-      const c = await res.json() as Card;
-      if (c && c.imageUrl) {
-        setCard(c);
-        setTimeout(() => inputRef.current?.focus(), 50);
-        setImageReady(false);
-        armImageTimeout(10000);
-      }
-    } catch (e) {
-      // ignore, queue fallback will handle
-    }
-  }
-
   async function initRound() {
     setLoading(true);
     setRevealed(false);
@@ -201,17 +188,21 @@ export default function PlayClient() {
     clearQuestionTimer();
     clearPostTimer();
 
-    // Kick off both in parallel: fast single and queue refill
-    await Promise.allSettled([fetchFirstCard(), ensureQueue()]);
+    // Always start by ensuring we have a batch; do not block on preload finishing.
+    await ensureQueue();
 
-    // If single failed and queue has items, use queue head
-    if (!card && queue.length > 0) {
-      const next = queue[0];
+    const next = queue.length > 0 ? queue[0] : null;
+    if (next) {
       setCard(next);
       setQueue((old) => old.slice(1));
       setTimeout(() => inputRef.current?.focus(), 50);
       setImageReady(false);
       armImageTimeout(10000);
+      // kick a background top-up if buffer is low
+      if (queue.length < QUEUE_MIN) { refillQueue(); }
+    } else {
+      // If we still have nothing, try one more refill without awaiting the image preloads
+      refillQueue();
     }
 
     setLoading(false);
@@ -227,17 +218,10 @@ export default function PlayClient() {
     clearImageTimeout();
 
     if (queue.length < 1) {
-      // Refill in background (do not block UI forever)
-      ensureQueue();
-      // As an immediate fallback, try a fast single
-      await fetchFirstCard();
-      if (card) {
-        setLoading(false);
-        return;
-      }
+      await ensureQueue();
     }
-
     const next = queue.length > 0 ? queue[0] : null;
+
     if (next) {
       setCard(next);
       setQueue((old) => old.slice(1));
@@ -245,7 +229,7 @@ export default function PlayClient() {
       setLoading(false);
       setImageReady(false);
       armImageTimeout(10000);
-      ensureQueue();
+      if (queue.length < QUEUE_MIN) { refillQueue(); }
       return;
     }
 
@@ -334,7 +318,7 @@ export default function PlayClient() {
       <div className='card'>
         <div className='header'>
           <h1 className='h1'>Guess the Animal</h1>
-        <div className='row'>
+          <div className='row'>
             <span className='badge'>Q: {progress}</span>
             <span className='badge'>Mode: {modeLabel}</span>
             {!revealed ? (
@@ -362,12 +346,13 @@ export default function PlayClient() {
                 return (
                   <div key={idx} className={'summaryCard ' + status}>
                     <div className='thumb'>
-                      <Image
+                      <img
                         src={h.imageUrl}
                         alt={h.commonName}
-                        fill
-                        sizes='(max-width: 400px) 100vw, 33vw'
-                        style={{ objectFit: 'cover' }}
+                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                        loading='lazy'
+                        decoding='async'
+                        referrerPolicy='no-referrer'
                       />
                     </div>
                     <h3 className={'summaryTitle ' + status}>
@@ -408,18 +393,12 @@ export default function PlayClient() {
                   decoding='async'
                   loading='eager'
                   referrerPolicy='no-referrer'
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                  }}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               )}
             </div>
             <div className='caption'>
-              Images from open sources (iNaturalist / Wikimedia). Always attribute and follow the license.
+              Images from open sources (GBIF / iNaturalist / Wikimedia). Always attribute and follow the license.
             </div>
 
             <form onSubmit={handleSubmit} className='row' style={{ marginTop: 14 }}>
@@ -458,5 +437,12 @@ export default function PlayClient() {
       </div>
     </main>
   );
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!card || revealed) return;
+    const scored = scoreGuess(card, guess);
+    finalizeCurrent(scored.pts, scored.correct);
+  }
 }
 
